@@ -1,0 +1,457 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: This template creates VPC with Public & Private Subnet with multiple server
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+      - Label:
+          default: VpcCIDR
+        Parameters:
+          - VpcCIDR
+      - Label:
+          default: Subnet CIDR
+        Parameters:
+          - PublicSubnet1CIDR
+          - PrivateSubnet1CIDR
+      - Label:
+          default: SSH CIDR
+        Parameters:
+          - SSHLocation
+
+Parameters:
+  VpcCIDR:
+    Default: 10.0.0.0/16
+    Description: Please enter the IP range (CIDR noataion) for this VPC
+    Type: String
+  
+  PublicSubnet1CIDR:
+    Default: 10.0.0.0/24
+    Description: Please enter the IP range (CIDR noataion) for this public subnet 1
+    Type: String
+  
+  Privatesubnet1CIDR:
+    Default: 10.0.1.0/24
+    Description: Please enter the IP range (CIDR noataion) for this private subnet 1
+    Type: String
+  
+  SSHLocation:
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+    Default: 0.0.0.0/0
+    Description: The IP address range that can be used to access the web server using SSH.
+    MaxLength: '18'
+    MinLength: '9'
+    Type: String
+  
+  KeyPair:
+    Description: Name of the keypair to use for SSH access
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the existing KeyPair.
+  
+  DBName:
+    Default: MyDatabase
+    Description: MySQL database name
+    Type: String
+    MinLength: '1'
+    MaxLength: '64'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: Must begin with a letter and contain only alphanumeric characters
+
+  DBUsername:
+    NoEcho: 'false'
+    Description: User name for MySQL database access
+    Default: user
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: '[a-zA-Z][a-zA-Z0-9]*'
+    ConstraintDescription: Must begin with a letter and contain only alphanumeric characters
+
+  DBPassword:
+    NoEcho: 'true'
+    Description: Password for MySQL database access
+    Default: password
+    Type: String
+    MinLength: '1'
+    MaxLength: '41'
+    AllowedPattern: '[a-zA-Z0-9]*'
+    ConstraintDescription: Must contain only alphanumeric characters
+
+
+Resources:
+  Vpc:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: VPC
+
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Test Internet Gateway
+
+  InternetGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone:
+        'Fn::Select':
+          - 0
+          - 'Fn::GetAZs': ''
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Public Subnet 1
+      VpcId: !Ref Vpc
+
+
+  PublicRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Public Route Table
+      VpcId: !Ref Vpc
+
+  PublicRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+
+  PrivateSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone:
+        'Fn::Select':
+          - 0
+          - 'Fn::GetAZs': ''
+      CidrBlock: !Ref Privatesubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: Private Subnet 1
+      VpcId: !Ref Vpc
+
+# Allocate Elastic IP Address (EIP 1)
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: VPC
+      Tags:
+        - Key: Name
+          Value: EIP 1
+
+# Create Nat Gateway 1 in Public Subnet 1    
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: Nat Gateway Public Subnet 1
+
+# Create Private Route Table 1
+  PrivateRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Private Route Table
+      VpcId: !Ref Vpc
+
+# Add a route to point internet-bound traffic to internet gateway 
+  PrivateRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+      RouteTableId: !Ref PrivateRouteTable
+
+# Associate Private Subnet 1 with Private Route Table 1
+  PrivateSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet1
+
+  SSHSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: SSH Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+      Tags:
+        - Key: Name
+          Value: SSH Security Group
+      VpcId: !Ref Vpc
+
+  WebServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Allow HTTP/HTTPS access to webserver
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref SSHSecurityGroup
+      Tags:
+        - Key: Name
+          Value: Webserver security Group
+      VpcId: !Ref Vpc
+
+#  ApplicationSecurityGroup:
+#    Type: 'AWS::EC2::SecurityGroup'
+#    Properties:
+#      GroupDescription: open application access
+#      SecurityGroupIngress:
+#        - IpProtocol: tcp
+#          FromPort: 80
+#          ToPort: 80
+#          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+#        - IpProtocol: tcp
+#          FromPort: 443
+#          ToPort: 443
+#          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+#        - IpProtocol: tcp
+#          FromPort: 22
+#          ToPort: 22
+#          SourceSecurityGroupId: !Ref SSHSecurityGroup
+#      Tags:
+#        - Key: Name
+#          Value: Application Security Group
+#      VpcId: !Ref Vpc
+
+#  DataBaseSecurityGroup:
+#    Type: 'AWS::EC2::SecurityGroup'
+#    Properties:
+#      GroupDescription: open Database for access
+#      SecurityGroupIngress:
+#        - IpProtocol: tcp
+#          FromPort: 3306
+#          ToPort: 3306
+#          SourceSecurityGroupId: !Ref ApplicationSecurityGroup          
+#        - IpProtocol: tcp
+#          FromPort: 22
+#          ToPort: 22
+#          SourceSecurityGroupId: !Ref SSHSecurityGroup          
+#
+#      Tags:
+#        - Key: Name
+#          Value: Database Securtiy Group
+#      VpcId: !Ref Vpc
+
+
+  Bastionjumpbox:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-8c1be5f6
+      NetworkInterfaces:
+        - GroupSet:
+            - !Ref SSHSecurityGroup
+          AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          DeleteOnTermination: 'true'
+          SubnetId: !Ref PublicSubnet1
+      KeyName: !Ref KeyPair
+      Tags:
+        - Key: Name
+          Value: Bastionjumpbox
+
+  Webserver:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-8c1be5f6
+      NetworkInterfaces:
+        - GroupSet:
+            - !Ref WebServerSecurityGroup
+          AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          DeleteOnTermination: 'true'
+          SubnetId: !Ref PrivateSubnet1
+      Tags:
+        - Key: Name
+          Value: Webserver
+      KeyName: !Ref KeyPair
+      UserData: !Base64 
+        'Fn::Join':
+          - |+
+
+          - - '#!/bin/bash -xe'
+            - sudo yum update -y
+            - sudo yum install httpd -y
+            - sudo /etc/init.d/httpd start
+            - echo "<html><body><h1>Awesome !!!</h1>" > /var/www/html/index.html
+            - echo "</body></html>" >> /var/www/html/index.html
+
+  Appserver:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-8c1be5f6   
+      NetworkInterfaces:
+        - GroupSet:
+            - !Ref WebServerSecurityGroup
+          AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          DeleteOnTermination: 'true'
+          SubnetId: !Ref PrivateSubnet1
+      Tags:
+        - Key: Name
+          Value: Appserver
+      KeyName: !Ref KeyPair
+      UserData: !Base64 
+        'Fn::Join':
+          - |+
+
+          - - '#!/bin/bash -xe'
+            - sudo yum update -y          
+            - sudo yum -y install java-1.8.0-openjdk-devel
+            - java -version
+            - cd /opt
+            - sudo wget http://download.jboss.org/wildfly/14.0.1.Final/wildfly-14.0.1.Final.tar.gz
+            - sudo tar xvf wildfly-14.0.1.Final.tar.gz
+            - sudo mv /opt/wildfly-14.0.1.Final /opt/wildfly
+            - sudo cp /opt/wildfly/docs/contrib/scripts/init.d/wildfly.conf /etc/default/
+            - sudo sed -i 's/# JAVA_HOME/JAVA_HOME/' /etc/default/wildfly.conf
+            - sudo sed -i 's+lib/jvm/default-java+bin/java+g' /etc/default/wildfly.conf
+            - sudo sed -i 's/# JBOSS_HOME/JBOSS_HOME/' /etc/default/wildfly.conf
+            - sudo sed -i 's/# JBOSS_MODE/JBOSS_MODE/' /etc/default/wildfly.conf
+            - sudo sed -i 's/# JBOSS_CONFIG/JBOSS_CONFIG/' /etc/default/wildfly.conf
+            - sudo sed -i 's/# STARTUP_WAIT/STARTUP_WAIT/' /etc/default/wildfly.conf
+            - sudo sed -i 's/# SHUTDOWN_WAIT/SHUTDOWN_WAIT/' /etc/default/wildfly.conf
+            - sudo sed -i 's/# JBOSS_CONSOLE_LOG/JBOSS_CONSOLE_LOG/' /etc/default/wildfly.conf
+            - sudo cp /opt/wildfly/docs/contrib/scripts/init.d/wildfly-init-redhat.sh /etc/init.d/
+            - sudo mv /etc/init.d/wildfly-init-redhat.sh /etc/init.d/wildfly
+            - sudo chkconfig — add wildfly
+            - sudo chkconfig wildfly on
+            - sudo mkdir -p /var/log/wildfly
+            - sudo chown -R wildfly:wildfly /opt/wildfly/
+            - sudo service wildfly start
+            - sudo service wildfly start
+            - sudo cp /opt/wildfly/docs/contrib/scripts/init.d/wildfly-init-redhat.sh /etc/init.d/
+            - sudo mv /etc/init.d/wildfly-init-redhat.sh /etc/init.d/wildfly
+            - sudo chkconfig --add wildfly
+            - sudo chkconfig wildfly on
+            - sudo sed -i 's+<wsdl-host>${jboss.bind.address:127.0.0.1}</wsdl-host>+<wsdl-host>${jboss.bind.address:0.0.0.0}</wsdl-host>+g' /opt/wildfly/standalone/configuration/standalone.xml
+            - sudo sed -i 's+<inet-address value="${jboss.bind.address.management:127.0.0.1}"/>+<inet-address value="${jboss.bind.address.management:0.0.0.0}"/>+g' /opt/wildfly/standalone/configuration/standalone.xml
+            - sudo sed -i 's+<inet-address value="${jboss.bind.address:127.0.0.1}"/>+<inet-address value="${jboss.bind.address:0.0.0.0}"/>+g' /opt/wildfly/standalone/configuration/standalone.xml
+            - sudo adduser -r wildfly
+            - sudo chown -R wildfly:wildfly /opt/wildfly/
+            - sudo service wildfly start
+
+
+  DBserver:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-8c1be5f6
+      NetworkInterfaces:
+        - GroupSet:
+            - !Ref WebServerSecurityGroup
+          AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          DeleteOnTermination: 'true'        
+          SubnetId: !Ref PrivateSubnet1
+      Tags:
+        - Key: Name
+          Value: DBserver
+      KeyName: !Ref KeyPair
+#      UserData: !Base64 
+#        'Fn::Join':
+#          - |+
+      UserData: 
+        Fn::Base64: !Sub |
+
+          - - '#!/bin/bash -xe'
+            - sudo yum -y update
+            - wget https://dev.mysql.com/get/mysql57-community-release-el7-11.noarch.rpm
+            - sudo yum -y localinstall mysql57-community-release-el7-11.noarch.rpm 
+            - sudo yum -y install mysql-community-server
+            - sudo systemctl start mysqld 
+#            - mysql -u root "-p$(grep -oP '(?<=root@localhost\: )\S+' /var/log/mysqld.log)" -e "ALTER USER 'root'@'localhost' IDENTIFIED BY '${DBPassword}'" --connect-expired-password
+#            - mysql -u root "-p${DBPassword}" -e "CREATE USER '${DBUsername}'@'%' IDENTIFIED BY '${DBPassword}'"
+#            - mysql -u root "-p${DBPassword}" -e "GRANT ALL PRIVILEGES ON *.* TO '${DBUsername}'@'%'"
+#            - mysql -u root "-p${DBPassword}" -e "FLUSH PRIVILEGES"  
+
+
+#  RDSDMysql:
+#    Type: 'AWS::RDS::DBInstance'
+#    Properties: {}
+
+
+
+Outputs:
+  VPC:
+    Description: VPC ID
+    Export:
+      Name: !Sub '${AWS::StackName}-VPC'
+    Value: !Ref Vpc
+  PublicSubnet1:
+    Description: Public Subnet 1 ID
+    Export:
+      Name: !Sub '${AWS::StackName}-PublicSubnet1'
+    Value: !Ref Vpc
+  PrivateSubnet1:
+    Description: Private Subnet 1 ID
+    Export:
+      Name: !Sub '${AWS::StackName}-PrivateSubnet1'
+    Value: !Ref Vpc
+  SSHSecurityGroup:
+    Description: SSH Security Group ID
+    Export:
+      Name: !Sub '${AWS::StackName}-SSHSecurityGroup'
+    Value: !Ref Vpc
+  WebServerSecurityGroup:
+    Description: Webserver security Group ID
+    Export:
+      Name: !Sub '${AWS::StackName}-WebServerSecurityGroup'
+    Value: !Ref Vpc
+  ApplicationSecurityGroup:
+    Description: Application server security Group ID
+    Export:
+      Name: !Sub '${AWS::StackName}-ApplicationSecurityGroup'
+    Value: !Ref Vpc
+  DataBaseSecurityGroup:
+    Description: Database Securtiy Group ID
+    Export:
+      Name: !Sub '${AWS::StackName}-DataBaseSecurityGroup'
+    Value: !Ref Vpc
